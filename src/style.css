@@ -1,0 +1,177 @@
+/* style.css — Connect & Chain prototype.
+   Two parts:
+   1) Game shell (phone frame, HUD, trays, overlays) — ported verbatim from the
+      design prototype's <style> block.
+   2) Tweaks panel + gear button — ported from the design tool's React island CSS
+      and adapted to run standalone (no host zoom var, self-contained toggle). */
+
+/* ──────────────────────────── 1. GAME SHELL ──────────────────────────── */
+:root{
+  --hud-ink:#2f6b3a; --hud-soft:rgba(47,107,58,0.6);
+  --panel-bg:rgba(255,255,255,0.82); --panel-bd:rgba(47,107,58,0.18);
+  --accent:#67C266; --reward:#FFD24C;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;height:100%;overflow:hidden;}
+body{
+  background:
+    radial-gradient(1000px 700px at 50% -10%, #2c2b33 0%, transparent 60%),
+    linear-gradient(160deg,#26252c,#19181d);
+  font-family:"Nunito",system-ui,sans-serif;color:#e9e6df;
+  display:flex;align-items:center;justify-content:center;
+  user-select:none;touch-action:none;
+}
+.stage{position:relative;}
+.cap{position:absolute;left:50%;bottom:-46px;transform:translateX(-50%);white-space:nowrap;
+  font-family:"Fredoka";font-weight:500;font-size:14px;color:#8b8893;letter-spacing:.02em;}
+.cap b{color:#cfcbd6;font-weight:600;}
+
+/* ---- device ---- */
+.device{width:414px;height:822px;background:linear-gradient(160deg,#2b2b30,#0e0e11);
+  border-radius:54px;padding:13px;box-shadow:0 40px 90px rgba(0,0,0,.55),0 0 0 2px rgba(255,255,255,.05) inset;position:relative;}
+.screen{position:relative;width:388px;height:796px;border-radius:42px;overflow:hidden;background:#bfe9ff;}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;}
+.notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:128px;height:30px;background:#0e0e11;border-radius:0 0 18px 18px;z-index:30;}
+
+/* ---- HUD top ---- */
+.hud-top{position:absolute;top:0;left:0;right:0;padding:40px 16px 8px;z-index:20;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;pointer-events:none;
+  font-family:"Fredoka";}
+.hud-pill{display:flex;align-items:center;gap:7px;background:var(--panel-bg);
+  border:1px solid var(--panel-bd);border-radius:999px;padding:7px 13px;
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  color:var(--hud-ink);font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.10);}
+.hud-pill .lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--hud-soft);}
+.hud-pill .val{font-size:19px;line-height:1;font-variant-numeric:tabular-nums;}
+.lives{display:flex;gap:3px;align-items:center;}
+.heart{width:17px;height:17px;}
+.frozen{font-size:13px;color:#39b6e6;}
+
+/* ---- HUD bottom tray ---- */
+.tray{position:absolute;left:0;right:0;bottom:0;z-index:20;padding:10px 14px 18px;
+  display:flex;align-items:flex-end;gap:10px;pointer-events:none;}
+.tray-card{pointer-events:auto;background:var(--panel-bg);border:1px solid var(--panel-bd);
+  border-radius:18px;padding:9px 10px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  box-shadow:0 6px 18px rgba(0,0,0,.12);}
+.tray .seeds{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:62px;}
+.chip-lbl{font-family:"Fredoka";font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--hud-soft);}
+.seed-chip{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+  font-size:24px;color:#fff;cursor:grab;touch-action:none;position:relative;box-shadow:0 3px 0 rgba(0,0,0,.12);transition:transform .12s;}
+.seed-chip:active{cursor:grabbing;transform:scale(.94);}
+.seed-chip .ct{position:absolute;right:-5px;top:-5px;background:#fff;color:var(--hud-ink);
+  font-family:"Fredoka";font-weight:700;font-size:12px;border-radius:999px;min-width:19px;height:19px;
+  display:flex;align-items:center;justify-content:center;padding:0 4px;box-shadow:0 2px 5px rgba(0,0,0,.2);}
+.pu-wrap{pointer-events:auto;flex:1;}
+.pu-row{display:flex;gap:7px;flex-wrap:wrap;}
+.pu-chip{width:42px;height:42px;border-radius:13px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:#fff;cursor:grab;touch-action:none;box-shadow:0 3px 0 rgba(0,0,0,.12);transition:transform .12s;}
+.pu-chip:active{transform:scale(.92);}
+.pu-chip .g{font-size:19px;line-height:1;}
+.pu-chip .n{font-size:8px;font-family:"Fredoka";font-weight:600;margin-top:1px;}
+.pu-empty{font-size:11px;color:var(--hud-soft);font-family:"Fredoka";padding:8px 4px;}
+
+/* ghost */
+#ghost{position:fixed;z-index:9999;width:50px;height:50px;border-radius:15px;display:none;
+  align-items:center;justify-content:center;font-size:26px;color:#fff;pointer-events:none;
+  transform:translate(-50%,-50%) scale(1.1);box-shadow:0 8px 22px rgba(0,0,0,.35);}
+
+/* toast */
+#toast{position:absolute;top:78px;left:50%;transform:translateX(-50%) translateY(-8px);z-index:25;
+  font-family:"Fredoka";font-weight:600;font-size:14px;color:#fff;padding:7px 16px;border-radius:999px;
+  opacity:0;transition:opacity .25s, transform .25s;pointer-events:none;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.25);}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* overlays */
+.overlay{position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:34px;color:#fff;
+  background:linear-gradient(160deg,rgba(20,30,40,.78),rgba(10,15,25,.86));
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);}
+.overlay.hide{display:none;}
+.overlay h1{font-family:"Fredoka";font-weight:700;font-size:40px;margin:0 0 6px;letter-spacing:-.01em;}
+.overlay .sub{font-size:16px;color:#cdd6e0;max-width:30ch;margin-bottom:24px;line-height:1.5;}
+.how{display:flex;flex-direction:column;gap:12px;margin-bottom:28px;width:100%;max-width:300px;}
+.how .row{display:flex;align-items:center;gap:13px;text-align:left;background:rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:11px 13px;}
+.how .ic{width:38px;height:38px;flex:none;}
+.how .tx{font-size:13.5px;line-height:1.35;color:#e8edf3;}
+.how .tx b{font-family:"Fredoka";font-weight:600;color:#fff;}
+.btn{font-family:"Fredoka";font-weight:600;font-size:21px;color:#16241a;background:var(--reward);
+  border:none;border-radius:16px;padding:15px 40px;cursor:pointer;box-shadow:0 7px 0 rgba(0,0,0,.22);transition:transform .1s;}
+.btn:active{transform:translateY(3px);box-shadow:0 4px 0 rgba(0,0,0,.22);}
+.stat-row{display:flex;gap:26px;margin-bottom:26px;}
+.stat .v{font-family:"Fredoka";font-weight:700;font-size:32px;}
+.stat .k{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#aeb8c4;}
+.endmark{font-size:54px;margin-bottom:6px;}
+
+/* ─────────────────────── 2. TWEAKS PANEL + GEAR ─────────────────────── */
+/* Ported from the design tool's tweaks-panel React island so the in-app
+   tuning UI keeps its exact look, minus the host-only zoom transform. */
+.twk-hidden{display:none !important;}
+
+.twk-fab{position:fixed;right:16px;bottom:16px;z-index:2147483645;
+  width:46px;height:46px;border-radius:50%;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;color:#29261b;
+  background:rgba(250,249,247,.78);
+  -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+  border:.5px solid rgba(255,255,255,.6);
+  box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 12px 40px rgba(0,0,0,.18);
+  transition:transform .12s cubic-bezier(.3,.7,.4,1);}
+.twk-fab:hover{transform:scale(1.06);}
+.twk-fab:active{transform:scale(.94);}
+.twk-fab svg{width:22px;height:22px;}
+
+.twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
+  max-height:calc(100vh - 32px);display:flex;flex-direction:column;
+  transform-origin:bottom right;
+  background:rgba(250,249,247,.78);color:#29261b;
+  -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+  border:.5px solid rgba(255,255,255,.6);border-radius:14px;
+  box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 12px 40px rgba(0,0,0,.18);
+  font:11.5px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden}
+.twk-hd{display:flex;align-items:center;justify-content:space-between;
+  padding:10px 8px 10px 14px;cursor:move;user-select:none}
+.twk-hd b{font-size:12px;font-weight:600;letter-spacing:.01em}
+.twk-x{appearance:none;border:0;background:transparent;color:rgba(41,38,27,.55);
+  width:22px;height:22px;border-radius:6px;cursor:pointer;font-size:13px;line-height:1}
+.twk-x:hover{background:rgba(0,0,0,.06);color:#29261b}
+.twk-body{padding:2px 14px 14px;display:flex;flex-direction:column;gap:10px;
+  overflow-y:auto;overflow-x:hidden;min-height:0;
+  scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.15) transparent}
+.twk-body::-webkit-scrollbar{width:8px}
+.twk-body::-webkit-scrollbar-track{background:transparent;margin:2px}
+.twk-body::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border-radius:4px;
+  border:2px solid transparent;background-clip:content-box}
+.twk-body::-webkit-scrollbar-thumb:hover{background:rgba(0,0,0,.25);
+  border:2px solid transparent;background-clip:content-box}
+.twk-row{display:flex;flex-direction:column;gap:5px}
+.twk-row-h{flex-direction:row;align-items:center;justify-content:space-between;gap:10px}
+.twk-lbl{display:flex;justify-content:space-between;align-items:baseline;
+  color:rgba(41,38,27,.72)}
+.twk-lbl>span:first-child{font-weight:500}
+.twk-val{color:rgba(41,38,27,.5);font-variant-numeric:tabular-nums}
+
+.twk-sect{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:rgba(41,38,27,.45);padding:10px 0 0}
+.twk-sect:first-child{padding-top:0}
+
+.twk-slider{appearance:none;-webkit-appearance:none;width:100%;height:4px;margin:6px 0;
+  border-radius:999px;background:rgba(0,0,0,.12);outline:none}
+.twk-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+  width:14px;height:14px;border-radius:50%;background:#fff;
+  border:.5px solid rgba(0,0,0,.12);box-shadow:0 1px 3px rgba(0,0,0,.2);cursor:pointer}
+.twk-slider::-moz-range-thumb{width:14px;height:14px;border-radius:50%;
+  background:#fff;border:.5px solid rgba(0,0,0,.12);box-shadow:0 1px 3px rgba(0,0,0,.2);cursor:pointer}
+
+.twk-seg{position:relative;display:flex;padding:2px;border-radius:8px;
+  background:rgba(0,0,0,.06);user-select:none}
+.twk-seg-thumb{position:absolute;top:2px;bottom:2px;border-radius:6px;
+  background:rgba(255,255,255,.9);box-shadow:0 1px 2px rgba(0,0,0,.12);
+  transition:left .15s cubic-bezier(.3,.7,.4,1),width .15s}
+.twk-seg button{appearance:none;position:relative;z-index:1;flex:1;border:0;
+  background:transparent;color:inherit;font:inherit;font-weight:500;min-height:22px;
+  border-radius:6px;cursor:pointer;padding:4px 6px;line-height:1.2;
+  overflow-wrap:anywhere;text-transform:capitalize}
+
+.twk-btn{appearance:none;height:26px;padding:0 12px;border:0;border-radius:7px;
+  background:rgba(0,0,0,.78);color:#fff;font:inherit;font-weight:500;cursor:pointer}
+.twk-btn:hover{background:rgba(0,0,0,.88)}

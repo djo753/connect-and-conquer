@@ -1,0 +1,6 @@
+{
+  "appId": "com.connectchain.app",
+  "appName": "Connect & Chain",
+  "webDir": "dist",
+  "backgroundColor": "#19181d"
+}
