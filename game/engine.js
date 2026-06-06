@@ -1,8 +1,5 @@
 // engine.js — Connect & Chain prototype game engine (vanilla canvas).
-// Ported to an ES module: exposes createGame(opts) -> game instance, plus POWERUPS.
-import { THEMES } from './themes.js';
-
-let GameEngine;
+// Exposes window.GameEngine.create(opts) -> game instance.
 (function () {
   'use strict';
 
@@ -37,7 +34,7 @@ let GameEngine;
     const canvas = opts.canvas;
     const ctx = canvas.getContext('2d');
     const hud = opts.hud || {};
-    let theme = THEMES[opts.config.theme] || THEMES.bloom;
+    let theme = window.THEMES[opts.config.theme] || window.THEMES.bloom;
 
     const cfg = Object.assign({
       theme: 'bloom',
@@ -708,9 +705,9 @@ let GameEngine;
     function start() { resize(); ensureStars(); reset(); running = true; finished = false; }
     function applyConfig(partial) {
       Object.assign(cfg, partial);
-      if (partial.theme && THEMES[partial.theme]) { theme = THEMES[partial.theme]; ensureStars(); }
+      if (partial.theme && window.THEMES[partial.theme]) { theme = window.THEMES[partial.theme]; ensureStars(); }
     }
-    function setTheme(k) { if (THEMES[k]) { theme = THEMES[k]; cfg.theme = k; ensureStars(); } }
+    function setTheme(k) { if (window.THEMES[k]) { theme = window.THEMES[k]; cfg.theme = k; ensureStars(); } }
 
     // bind input
     canvas.addEventListener('pointerdown', e => { e.preventDefault(); canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId); onDown(e); });
@@ -725,8 +722,5 @@ let GameEngine;
     return api;
   }
 
-  GameEngine = { create, POWERUPS };
+  window.GameEngine = { create, POWERUPS };
 })();
-
-export const createGame = GameEngine.create;
-export const POWERUPS = GameEngine.POWERUPS;

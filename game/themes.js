@@ -1,7 +1,7 @@
 // themes.js — palette + style descriptors for the three cartoony worlds.
 // The engine reads these to recolor/redraw every element. dotStyle drives the
 // buddy silhouette; everything else is pure color.
-export const THEMES = {
+window.THEMES = {
   bloom: {
     key: 'bloom',
     label: 'Bloom · garden',
