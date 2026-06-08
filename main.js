@@ -90,9 +90,12 @@
     theme: 'bloom',
     spawnInterval: 2.6,
     growTime: 9,
+    rewardInterval: 18,
+    batteryInterval: 26,
+    specialSpawnChance: 0.02,
     chainStart: 2,
     chainGrowthInterval: 20,
-    dotActivations: 3,
+    dotActivations: 4,
     startSeeds: 4,
     juice: 1,
   };
@@ -100,7 +103,6 @@
     gameDuration: 300,
     startLives: 5,
     startDots: 4,
-    rewardInterval: 18,
     powerupInterval: 22,
     chainGrowthAmount: 1,
     ...TWEAK_DEFAULTS,
@@ -153,6 +155,8 @@
   function applyTweaks(t) {
     const map = {
       theme: t.theme, juice: t.juice, spawnInterval: t.spawnInterval, growTime: t.growTime,
+      rewardInterval: t.rewardInterval, batteryInterval: t.batteryInterval,
+      specialSpawnChance: t.specialSpawnChance,
       chainGrowthInterval: t.chainGrowthInterval, chainStart: t.chainStart,
       dotActivations: t.dotActivations, startSeeds: t.startSeeds,
     };

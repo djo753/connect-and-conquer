@@ -42,7 +42,7 @@
       startLives: 5,
       startSeeds: 4,
       startDots: 4,
-      dotActivations: 3,
+      dotActivations: 4,
       spawnInterval: 2.6,       // seconds between threat spawns (start)
       spawnFloor: 0.7,          // fastest spawn interval
       spawnSpeedup: 0.93,       // interval *= this each spawn
@@ -50,6 +50,15 @@
       shakeTime: 2,             // seconds shaking before explode
       rewardInterval: 18,       // seconds between reward threats
       powerupInterval: 22,      // seconds between free power-up grants
+      shotRange: 4,             // directional shot range in cells (1-star = no shot, 2+ = cone)
+      threatHitPad: 14,         // extra px added to threat radius for line hit detection
+      batteryInterval: 26,      // seconds between battery (recharge) threats
+      shotBlastRadius: 1.1,     // cells: small AoE circle around the firing star
+      specialSpawnChance: 0.02, // base chance to spawn a special threat behind a kill
+      coneChargeRate: 0.35,     // cone range growth per second while holding the shot
+      coneChargeMax: 1.2,       // max bonus range multiplier from charging
+      coneChargeAngleRate: 0.25,// cone half-angle growth per second while holding
+      coneChargeAngleMax: 0.8,  // max bonus angle multiplier from charging
       chainStart: 2,
       chainGrowthInterval: 20,  // seconds
       chainGrowthAmount: 1,
@@ -68,10 +77,11 @@
     let pointer = { x: 0, y: 0, down: false };
     let carrying = null;            // {kind:'seed'} | {kind:'pu', type}
     let lives, seeds, powerups, maxChain, elapsed, sinceSpawn, spawnEvery,
-        sinceReward, sincePowerup, sinceGrowth, freezeTimer, timeScale, targetScale,
+        sinceReward, sinceBattery, sincePowerup, sinceGrowth, holdCharge, freezeTimer, timeScale, targetScale,
         shakeMag, flashA, running, finished, won;
 
     let nextId = 1;
+    let lastTap = { t: 0, x: 0, y: 0 };
 
     function reset() {
       dots = []; threats = []; parts = []; floats = []; chain = []; chainBonus = 0;
@@ -79,7 +89,7 @@
       powerups = ['blast', 'freeze', 'chain']; // a starter hand to show the system
       maxChain = cfg.chainStart;
       elapsed = 0; sinceSpawn = 0; spawnEvery = cfg.spawnInterval;
-      sinceReward = 0; sincePowerup = 0; sinceGrowth = 0;
+      sinceReward = 0; sinceBattery = 0; sincePowerup = 0; sinceGrowth = 0; holdCharge = 0;
       freezeTimer = 0; timeScale = 1; targetScale = 1; shakeMag = 0; flashA = 0;
       finished = false; won = false; carrying = null;
       // seed a few starting dots so the core feel is immediate
@@ -135,12 +145,16 @@
     }
 
     // ---- threats -----------------------------------------------------------
-    function spawnThreat(reward) {
-      const x = rand(cell * 0.7, W - cell * 0.7);
-      const y = rand(topMargin + cell * 0.6, H - botMargin - cell * 0.4);
+    // kind: 'normal' | 'reward' (seed) | 'battery' (recharge). atX/atY optional placement.
+    function spawnThreat(kind, atX, atY) {
+      kind = kind || 'normal';
+      const special = kind !== 'normal';
+      const x = atX != null ? atX : rand(cell * 0.7, W - cell * 0.7);
+      const y = atY != null ? atY : rand(topMargin + cell * 0.6, H - botMargin - cell * 0.4);
       threats.push({
-        id: nextId++, x, y, age: 0, reward: !!reward,
-        minR: cell * 0.16, maxR: cell * (reward ? 0.62 : 0.7),
+        id: nextId++, x, y, age: 0, kind,
+        reward: kind === 'reward', battery: kind === 'battery',
+        minR: cell * 0.16, maxR: cell * (special ? 0.62 : 0.7),
         phase: Math.random() * TAU, dead: false, popping: 0,
       });
     }
@@ -189,7 +203,18 @@
       const i = dotAt(p.x, p.y, 0.05);
       if (i >= 0) {
         chain = [i]; chainBonus = dots[i].pu === 'chain' ? 2 : 0;
+        lastTap.t = 0; // a dot tap shouldn't count toward double-tap-to-plant
         navigator.vibrate && navigator.vibrate(8);
+        return;
+      }
+      // double-tap empty field to plant a star from your seeds
+      const now = performance.now();
+      const onField = p.x >= 0 && p.x <= W && p.y >= topMargin * 0.6 && p.y <= H - botMargin * 0.4;
+      if (now - lastTap.t < 350 && Math.hypot(p.x - lastTap.x, p.y - lastTap.y) < cell) {
+        lastTap.t = 0;
+        if (onField && seeds > 0 && plantAt(p.x, p.y, false)) { seeds--; pushHud(); }
+      } else {
+        lastTap = { t: now, x: p.x, y: p.y };
       }
     }
     function onMove(e) {
@@ -202,43 +227,110 @@
       const last = chain[chain.length - 1];
       if (i === last) return;
       const existingPos = chain.indexOf(i);
-      if (existingPos >= 0 && existingPos <= chain.length - 2) {
-        // closed a loop back onto an earlier dot
-        resolve(true, i);
+      if (existingPos >= 0) {
+        if (existingPos === 0) {
+          // traced back to the origin dot — cancel the whole chain
+          chain = [];
+          navigator.vibrate && navigator.vibrate(4);
+        } else {
+          // traced back to an earlier dot — truncate chain to that point (reroute)
+          chain = chain.slice(0, existingPos + 1);
+          // recalculate chainBonus from scratch after truncation
+          chainBonus = 0;
+          for (const ci of chain) if (dots[ci].pu === 'chain') chainBonus += 2;
+          navigator.vibrate && navigator.vibrate(4);
+        }
         return;
       }
-      if (existingPos === -1 && chain.length < cap) {
+      // add new dot if under cap
+      if (chain.length < cap) {
         chain.push(i);
         if (dots[i].pu === 'chain') chainBonus += 2;
         navigator.vibrate && navigator.vibrate(6);
-        if (chain.length >= maxChain + chainBonus) resolve(false, null);
       }
     }
     function onUp(e) {
       pointer.down = false;
       if (carrying) { dropCarry(e); return; }
-      if (chain.length >= 2) resolve(false, null);
+      if (chain.length >= 1) resolve(false, null);
       else chain = [];
     }
 
     // ---- resolve the chain -------------------------------------------------
+    // Returns cone parameters for a given chain length (0 = no cone)
+    function coneParams(chainLen) {
+      if (chainLen < 1) return null;
+      const base = cfg.shotRange * cell;
+      const D = Math.PI / 180;
+      let range, halfAngle;
+      if (chainLen === 1)      { range = base;        halfAngle = 15 * D; }
+      else if (chainLen === 2) { range = base * 1.25; halfAngle = 15 * D; }
+      else if (chainLen === 3) { range = base * 1.6;  halfAngle = 28 * D; }
+      else                     { range = base * 2.0;  halfAngle = 38 * D; }
+      // grow longer & wider the longer you hold the shot
+      const rangeMul = 1 + Math.min(holdCharge * cfg.coneChargeRate, cfg.coneChargeMax);
+      const angleMul = 1 + Math.min(holdCharge * cfg.coneChargeAngleRate, cfg.coneChargeAngleMax);
+      range *= rangeMul;
+      halfAngle = Math.min(halfAngle * angleMul, 75 * D);
+      return { range, halfAngle };
+    }
+
     function resolve(isLoop, loopBackIndex) {
+      if (!chain.length) return;
       const pts = chain.map(i => ({ x: dots[i].x, y: dots[i].y }));
       if (isLoop && loopBackIndex != null) {
         const lb = dots[loopBackIndex];
         pts.push({ x: lb.x, y: lb.y });
       }
-      // collect kills along the polyline
+
+      // chain-length-based line thickness: 4+ stars get a thick line
+      const thickLine = chain.length >= 4;
+
+      // directional cone from the last dot toward the pointer
+      const cone = coneParams(chain.length);
+      const last = pts[pts.length - 1];
+      const dx = pointer.x - last.x, dy = pointer.y - last.y;
+      const pointerDist = Math.hypot(dx, dy);
+      const hasConeDir = pointerDist > cell * 0.3; // only shoot if pointer is meaningfully far
+
+      // collect kills along the polyline (only if chain has 2+ pts)
       const killed = new Set();
-      for (const t of threats) {
-        if (t.dead) continue;
-        const r = threatRadius(t) + 6;
-        for (let s = 0; s < pts.length - 1; s++) {
-          if (segDist(t.x, t.y, pts[s].x, pts[s].y, pts[s + 1].x, pts[s + 1].y) <= r) {
-            killed.add(t); break;
+      if (pts.length >= 2) {
+        for (const t of threats) {
+          if (t.dead) continue;
+          const r = threatRadius(t) + cfg.threatHitPad;
+          for (let s = 0; s < pts.length - 1; s++) {
+            if (segDist(t.x, t.y, pts[s].x, pts[s].y, pts[s + 1].x, pts[s + 1].y) <= r) {
+              killed.add(t); break;
+            }
           }
         }
       }
+
+      // cone / directional shot from final dot
+      if (cone && hasConeDir) {
+        const dirX = dx / pointerDist, dirY = dy / pointerDist;
+        for (const t of threats) {
+          if (t.dead || killed.has(t)) continue;
+          const tx = t.x - last.x, ty = t.y - last.y;
+          const tDist = Math.hypot(tx, ty);
+          if (tDist > cone.range + threatRadius(t)) continue;
+          const cosA = (tx * dirX + ty * dirY) / (tDist || 1);
+          const angle = Math.acos(clamp(cosA, -1, 1));
+          if (angle <= cone.halfAngle) killed.add(t);
+        }
+      }
+
+      // small AoE circle around the firing star (always on a shot)
+      if (cone) {
+        const br = cfg.shotBlastRadius * cell;
+        for (const t of threats) {
+          if (t.dead || killed.has(t)) continue;
+          if (dist2(t.x, t.y, last.x, last.y) <= br * br) killed.add(t);
+        }
+        ring(last.x, last.y, br, theme.lineCore);
+      }
+
       // fire power-ups on chained dots
       let healLife = 0, mendCount = 0, blastHits = 0;
       for (const i of chain) {
@@ -273,11 +365,25 @@
       let gained = 0;
       killed.forEach(t => {
         t.dead = true; t.popping = 1;
-        burst(t.x, t.y, theme.threatParticles, t.reward ? 22 : 14, t.reward ? 3 : 2.4);
+        const special = t.reward || t.battery;
+        burst(t.x, t.y, theme.threatParticles, special ? 22 : 14, special ? 3 : 2.4);
         if (t.reward) { seeds++; gained++; floatText(t.x, t.y, '+1 seed', theme.reward, false); }
+        if (t.battery) {
+          for (const d of dots) { d.act = d.max; d.pop = 1; }
+          floatText(t.x, t.y, 'Recharged!', theme.lineCore, true);
+        }
       });
+      // chance to spawn a special threat behind the kills (grows with combo size)
+      if (n > 0) {
+        const chance = Math.min(1, cfg.specialSpawnChance * Math.pow(n, 1.5));
+        if (Math.random() < chance) {
+          const arr = Array.from(killed);
+          const src = arr[(Math.random() * arr.length) | 0];
+          spawnThreat(Math.random() < 0.5 ? 'reward' : 'battery', src.x, src.y);
+        }
+      }
 
-      // spend activations (unique dots; multi spends none)
+      // spend activations only if chain had at least 1 dot (single-dot shot still costs)
       for (const i of chain) {
         const d = dots[i];
         if (d._free) { d._free = false; continue; }
@@ -301,10 +407,10 @@
       shakeMag = Math.min(22, shakeMag + (2 + n * 1.6 + (isLoop ? 4 : 0)) * cfg.juice);
       flashA = Math.max(flashA, Math.min(0.6, (0.06 + n * 0.05 + (big ? 0.18 : 0)) * cfg.juice));
       if (big) { targetScale = 0.34; slowTimer = 0.55; navigator.vibrate && navigator.vibrate([12, 30, 18]); }
-      // line afterglow
-      glowLine = { pts, life: 1 };
+      // line afterglow — carry thick flag and cone info for the afterglow draw
+      glowLine = { pts, life: 1, thick: thickLine, cone: (cone && hasConeDir) ? { last, dirX: dx / (pointerDist || 1), dirY: dy / (pointerDist || 1), range: cone.range, halfAngle: cone.halfAngle } : null };
 
-      chain = []; chainBonus = 0;
+      chain = []; chainBonus = 0; holdCharge = 0;
       pushHud();
     }
     let slowTimer = 0;
@@ -360,6 +466,9 @@
       timeScale += (targetScale - timeScale) * Math.min(1, dt * 10);
       const sdt = dt * timeScale;
 
+      // cone charge while aiming a shot (uses real dt for predictable feel)
+      if (pointer.down && chain.length >= 1 && !carrying) holdCharge += dt; else holdCharge = 0;
+
       elapsed += sdt;
       if (elapsed >= cfg.gameDuration) { endGame(true); }
 
@@ -371,11 +480,13 @@
       sinceSpawn += sdt;
       if (sinceSpawn >= spawnEvery) {
         sinceSpawn -= spawnEvery;
-        spawnThreat(false);
+        spawnThreat('normal');
         spawnEvery = Math.max(cfg.spawnFloor, spawnEvery * cfg.spawnSpeedup);
       }
       sinceReward += sdt;
-      if (sinceReward >= cfg.rewardInterval) { sinceReward -= cfg.rewardInterval; spawnThreat(true); }
+      if (sinceReward >= cfg.rewardInterval) { sinceReward -= cfg.rewardInterval; spawnThreat('reward'); }
+      sinceBattery += sdt;
+      if (sinceBattery >= cfg.batteryInterval) { sinceBattery -= cfg.batteryInterval; spawnThreat('battery'); }
       sincePowerup += sdt;
       if (sincePowerup >= cfg.powerupInterval) { sincePowerup -= cfg.powerupInterval; grantPowerup(); }
 
@@ -515,23 +626,75 @@
     function drawChain(ctx, now) {
       if (chain.length === 0) return;
       const pts = chain.map(i => ({ x: dots[i].x, y: dots[i].y }));
-      if (pointer.down) pts.push({ x: pointer.x, y: pointer.y });
-      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      // glow
-      ctx.strokeStyle = theme.lineGlow; ctx.globalAlpha = 0.55; ctx.lineWidth = 14;
-      ctx.shadowColor = theme.lineGlow; ctx.shadowBlur = 18 * cfg.juice;
-      strokePts(ctx, pts);
-      // core
-      ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.strokeStyle = theme.lineCore; ctx.lineWidth = 5;
-      ctx.setLineDash([2, 10]); ctx.lineDashOffset = -now * 0.04; strokePts(ctx, pts); ctx.setLineDash([]);
+      const last = pts[pts.length - 1];
+      const thickLine = chain.length >= 4;
+
+      // cone preview toward pointer
+      const cone = coneParams(chain.length);
+      const pdx = pointer.x - last.x, pdy = pointer.y - last.y;
+      const pDist = Math.hypot(pdx, pdy);
+      const hasConeDir = pDist > cell * 0.3;
+      if (cone && hasConeDir && pointer.down) {
+        const dirX = pdx / pDist, dirY = pdy / pDist;
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        ctx.fillStyle = theme.lineGlow;
+        ctx.shadowColor = theme.lineGlow;
+        ctx.shadowBlur = 14 * cfg.juice;
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.arc(last.x, last.y, cone.range, Math.atan2(dirY, dirX) - cone.halfAngle, Math.atan2(dirY, dirX) + cone.halfAngle);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (pts.length >= 2 || (pts.length === 1 && pointer.down)) {
+        const drawPts = pts.slice();
+        if (pointer.down) drawPts.push({ x: pointer.x, y: pointer.y });
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        // glow
+        ctx.strokeStyle = theme.lineGlow; ctx.globalAlpha = 0.55;
+        ctx.lineWidth = thickLine ? 26 : 14;
+        ctx.shadowColor = theme.lineGlow; ctx.shadowBlur = 18 * cfg.juice;
+        if (drawPts.length >= 2) strokePts(ctx, drawPts);
+        // core
+        ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.strokeStyle = theme.lineCore;
+        ctx.lineWidth = thickLine ? 10 : 5;
+        ctx.setLineDash([2, 10]); ctx.lineDashOffset = -now * 0.04;
+        if (drawPts.length >= 2) strokePts(ctx, drawPts);
+        ctx.setLineDash([]);
+      }
       // node rings
       for (const i of chain) { const d = dots[i]; ctx.strokeStyle = theme.lineCore; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(d.x, d.y, cell * 0.46, 0, TAU); ctx.stroke(); }
     }
     function strokePts(ctx, pts) { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y); ctx.stroke(); }
     function drawGlowLine(ctx, gl) {
-      ctx.save(); ctx.globalAlpha = clamp(gl.life, 0, 1) * 0.8; ctx.strokeStyle = theme.lineCore;
-      ctx.lineWidth = 6 + (1 - gl.life) * 26; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.shadowColor = theme.lineGlow; ctx.shadowBlur = 24 * cfg.juice; strokePts(ctx, gl.pts); ctx.restore();
+      ctx.save();
+      // cone afterglow
+      if (gl.cone) {
+        const c = gl.cone;
+        ctx.globalAlpha = clamp(gl.life, 0, 1) * 0.35;
+        ctx.fillStyle = theme.lineGlow;
+        ctx.shadowColor = theme.lineGlow;
+        ctx.shadowBlur = 20 * cfg.juice;
+        ctx.beginPath();
+        ctx.moveTo(c.last.x, c.last.y);
+        ctx.arc(c.last.x, c.last.y, c.range * (0.5 + gl.life * 0.5), Math.atan2(c.dirY, c.dirX) - c.halfAngle, Math.atan2(c.dirY, c.dirX) + c.halfAngle);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+      // line afterglow (only if there were 2+ points)
+      if (gl.pts.length >= 2) {
+        ctx.globalAlpha = clamp(gl.life, 0, 1) * 0.8;
+        ctx.strokeStyle = theme.lineCore;
+        ctx.lineWidth = (gl.thick ? 10 : 6) + (1 - gl.life) * 26;
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.shadowColor = theme.lineGlow; ctx.shadowBlur = 24 * cfg.juice;
+        strokePts(ctx, gl.pts);
+      }
+      ctx.restore();
     }
 
     function blobPath(ctx, x, y, r, wob, ph) {
@@ -543,6 +706,46 @@
         i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
       }
       ctx.closePath();
+    }
+
+    function roundRect(ctx, x, y, w, h, rad) {
+      ctx.beginPath();
+      ctx.moveTo(x + rad, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rad);
+      ctx.arcTo(x + w, y + h, x, y + h, rad);
+      ctx.arcTo(x, y + h, x, y, rad);
+      ctx.arcTo(x, y, x + w, y, rad);
+      ctx.closePath();
+    }
+
+    // a cute little battery that recharges every star when sliced
+    function drawBattery(ctx, x, y, r, danger) {
+      const w = r * 1.5, h = r * 2.0;
+      if (danger) { ctx.shadowColor = '#5bd66a'; ctx.shadowBlur = 22; }
+      // top terminal nub
+      ctx.fillStyle = '#d8e0c8';
+      roundRect(ctx, x - w * 0.22, y - h / 2 - r * 0.26, w * 0.44, r * 0.32, r * 0.1); ctx.fill();
+      // body
+      const grad = ctx.createLinearGradient(x, y - h / 2, x, y + h / 2);
+      grad.addColorStop(0, '#9bef9f'); grad.addColorStop(1, '#37b24d');
+      ctx.fillStyle = grad;
+      roundRect(ctx, x - w / 2, y - h / 2, w, h, r * 0.32); ctx.fill();
+      ctx.shadowBlur = 0;
+      // outline
+      ctx.strokeStyle = '#2c8a3a'; ctx.lineWidth = Math.max(1.5, r * 0.1);
+      roundRect(ctx, x - w / 2, y - h / 2, w, h, r * 0.32); ctx.stroke();
+      // lightning bolt
+      const s = r * 0.95;
+      ctx.fillStyle = '#ffd24c'; ctx.strokeStyle = '#a9701a'; ctx.lineWidth = Math.max(1, r * 0.07);
+      ctx.beginPath();
+      ctx.moveTo(x + s * 0.20, y - s * 0.58);
+      ctx.lineTo(x - s * 0.30, y + s * 0.06);
+      ctx.lineTo(x + s * 0.02, y + s * 0.06);
+      ctx.lineTo(x - s * 0.16, y + s * 0.58);
+      ctx.lineTo(x + s * 0.32, y - s * 0.10);
+      ctx.lineTo(x + s * 0.02, y - s * 0.10);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
     }
 
     function drawThreat(ctx, t, now) {
@@ -557,6 +760,7 @@
       const x = t.x + jx, y = t.y + jy, rr = r * breathe;
 
       ctx.save();
+      if (t.battery) { drawBattery(ctx, x, y, rr, danger); ctx.restore(); ctx.globalAlpha = 1; return; }
       // soft outer glow when dangerous
       if (danger) { ctx.shadowColor = t.reward ? theme.reward : theme.threatBody; ctx.shadowBlur = 22; }
       // body

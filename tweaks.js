@@ -106,6 +106,9 @@
     section('Threats');
     slider({ label: 'Spawn gap', key: 'spawnInterval', min: 0.8, max: 4, step: 0.1, unit: 's' });
     slider({ label: 'Grow time', key: 'growTime', min: 4, max: 16, step: 0.5, unit: 's' });
+    slider({ label: 'Seed gap', key: 'rewardInterval', min: 6, max: 40, step: 1, unit: 's' });
+    slider({ label: 'Battery gap', key: 'batteryInterval', min: 6, max: 60, step: 1, unit: 's' });
+    slider({ label: 'Special chance', key: 'specialSpawnChance', min: 0, max: 0.2, step: 0.01 });
     section('Chaining');
     slider({ label: 'Start cap', key: 'chainStart', min: 2, max: 6, step: 1 });
     slider({ label: '+1 cap every', key: 'chainGrowthInterval', min: 8, max: 40, step: 1, unit: 's' });
