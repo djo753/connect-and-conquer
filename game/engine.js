@@ -19,40 +19,37 @@
     return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
   }
 
-  // ---- power-up catalog --------------------------------------------------
-  const POWERUPS = {
-    blast:  { label: 'Blast',  blurb: 'Clears threats around the dot' },
-    chain:  { label: 'Reach',  blurb: '+2 chain length this gesture' },
-    freeze: { label: 'Freeze', blurb: 'Stops threat growth ~4s' },
-    multi:  { label: 'Free',   blurb: 'Spends no activation' },
-    healdot:{ label: 'Mend',   blurb: 'Refills your weakest dot' },
-    life:   { label: 'Heart',  blurb: 'Restores one life' },
-  };
-  const POWERUP_KEYS = Object.keys(POWERUPS);
-
   function create(opts) {
     const canvas = opts.canvas;
     const ctx = canvas.getContext('2d');
     const hud = opts.hud || {};
-    let theme = window.THEMES[opts.config.theme] || window.THEMES.bloom;
+    let theme = window.THEMES[opts.config.theme] || window.THEMES.glow;
 
     const cfg = Object.assign({
-      theme: 'bloom',
+      theme: 'glow',
       gameDuration: 300,        // seconds to survive
       startLives: 5,
       startSeeds: 4,
-      startDots: 4,
-      dotActivations: 4,
+      startSunSeeds: 1,         // blue-sun seeds you start with
+      startDots: 2,
+      dotActivations: 4,        // charges on a normal star
+      sunActivations: 5,        // charges on a blue sun
+      sunSeedChance: 0.25,      // fraction of buddy drops that are blue suns
+      sunBlastMaxRadiusFrac: 0.1, // sun's circle radius at max links, as fraction of screen width
       spawnInterval: 2.6,       // seconds between threat spawns (start)
       spawnFloor: 0.7,          // fastest spawn interval
       spawnSpeedup: 0.93,       // interval *= this each spawn
       growTime: 9,              // seconds small -> max
       shakeTime: 2,             // seconds shaking before explode
-      rewardInterval: 18,       // seconds between reward threats
-      powerupInterval: 22,      // seconds between free power-up grants
+      specialInterval: 16,      // seconds between special threats (buddy drops + batteries)
+      batteryShare: 0.35,       // fraction of special threats that are batteries (rest are buddy drops)
+      eelEveryThreats: 15,      // spawn a star eel every Nth normal threat
+      eelSpeed: 3,              // eel rush speed in cells/second
+      spiderEveryThreats: 18,   // spawn a web spider every Nth normal threat
+      spiderSpeed: 3,           // spider rush speed in cells/second
+      spiderPullSpeed: 1.2,     // speed the spider drags a webbed star to the edge (cells/sec)
       shotRange: 4,             // directional shot range in cells (1-star = no shot, 2+ = cone)
       threatHitPad: 14,         // extra px added to threat radius for line hit detection
-      batteryInterval: 26,      // seconds between battery (recharge) threats
       shotBlastRadius: 1.1,     // cells: small AoE circle around the firing star
       specialSpawnChance: 0.02, // base chance to spawn a special threat behind a kill
       coneChargeRate: 0.35,     // cone range growth per second while holding the shot
@@ -60,8 +57,11 @@
       coneChargeAngleRate: 0.25,// cone half-angle growth per second while holding
       coneChargeAngleMax: 0.8,  // max bonus angle multiplier from charging
       chainStart: 2,
-      chainGrowthInterval: 20,  // seconds
-      chainGrowthAmount: 1,
+      xpBase: 100,              // xp needed to reach level 2
+      xpGrowth: 3,              // each level needs this multiple of the previous level's xp
+      maxLevel: 5,              // level cap (each level grants +1 max chain)
+      xpPerEnemy: 10,           // base xp per enemy destroyed
+      xpComboBonusMax: 10,      // max bonus xp per enemy from combo size
       juice: 1,                 // 0..1.4 multiplier for fx
     }, opts.config);
 
@@ -71,26 +71,25 @@
     let topMargin = 92, botMargin = 116; // HUD reserved zones (css px)
 
     // state
-    let dots = [], threats = [], parts = [], floats = [];
+    let dots = [], threats = [], eels = [], spiders = [], parts = [], floats = [];
     let chain = [];                 // dot indices in order
-    let chainBonus = 0;             // from chain power-ups in current gesture
     let pointer = { x: 0, y: 0, down: false };
-    let carrying = null;            // {kind:'seed'} | {kind:'pu', type}
-    let lives, seeds, powerups, maxChain, elapsed, sinceSpawn, spawnEvery,
-        sinceReward, sinceBattery, sincePowerup, sinceGrowth, holdCharge, freezeTimer, timeScale, targetScale,
+    let carrying = null;            // {kind:'seed', type:'normal'|'sun'}
+    let lives, seeds, sunSeeds, maxChain, elapsed, sinceSpawn, spawnEvery, threatSpawnCount,
+        sinceSpecial, holdCharge, xp, level, timeScale, targetScale,
         shakeMag, flashA, running, finished, won;
 
     let nextId = 1;
     let lastTap = { t: 0, x: 0, y: 0 };
 
     function reset() {
-      dots = []; threats = []; parts = []; floats = []; chain = []; chainBonus = 0;
-      lives = cfg.startLives; seeds = cfg.startSeeds;
-      powerups = ['blast', 'freeze', 'chain']; // a starter hand to show the system
+      dots = []; threats = []; eels = []; spiders = []; parts = []; floats = []; chain = [];
+      lives = cfg.startLives; seeds = cfg.startSeeds; sunSeeds = cfg.startSunSeeds;
+      level = 1; xp = 0;
       maxChain = cfg.chainStart;
-      elapsed = 0; sinceSpawn = 0; spawnEvery = cfg.spawnInterval;
-      sinceReward = 0; sinceBattery = 0; sincePowerup = 0; sinceGrowth = 0; holdCharge = 0;
-      freezeTimer = 0; timeScale = 1; targetScale = 1; shakeMag = 0; flashA = 0;
+      elapsed = 0; sinceSpawn = 0; spawnEvery = cfg.spawnInterval; threatSpawnCount = 0;
+      sinceSpecial = 0; holdCharge = 0;
+      timeScale = 1; targetScale = 1; shakeMag = 0; flashA = 0;
       finished = false; won = false; carrying = null;
       // seed a few starting dots so the core feel is immediate
       const used = new Set();
@@ -121,32 +120,27 @@
       return { c, r };
     }
 
-    function plantAt(x, y, silent) {
+    function plantAt(x, y, silent, kind) {
       const { c, r } = nearestCell(x, y);
       const cc = cellCenter(c, r);
       // avoid stacking on an existing dot
       for (const d of dots) if (d.c === c && d.r === r) return false;
-      const d = { id: nextId++, c, r, x: cc.x, y: cc.y, act: cfg.dotActivations,
-                  max: cfg.dotActivations, pu: null, phase: Math.random() * TAU, pop: 0 };
+      const isSun = kind === 'sun';
+      const acts = isSun ? cfg.sunActivations : cfg.dotActivations;
+      const d = { id: nextId++, c, r, x: cc.x, y: cc.y, kind: isSun ? 'sun' : 'normal',
+                  act: acts, max: acts, entangled: false, webbed: false, phase: Math.random() * TAU, pop: 0 };
       dots.push(d);
       if (!silent) {
-        burst(cc.x, cc.y, theme.plantParticles, 14, 2.4);
+        burst(cc.x, cc.y, isSun ? ['#4ea8ff', '#bfe4ff', '#ffffff'] : theme.plantParticles, 14, 2.4);
         d.pop = 1;
       } else { d.pop = 0.6; }
       return true;
     }
 
-    // ---- power-ups ---------------------------------------------------------
-    function grantPowerup(type) {
-      const t = type || POWERUP_KEYS[(Math.random() * POWERUP_KEYS.length) | 0];
-      powerups.push(t);
-      if (hud.toast) hud.toast('Power-up! ' + POWERUPS[t].label, theme.reward);
-      pushHud();
-    }
-
     // ---- threats -----------------------------------------------------------
-    // kind: 'normal' | 'reward' (seed) | 'battery' (recharge). atX/atY optional placement.
-    function spawnThreat(kind, atX, atY) {
+    // kind: 'normal' | 'reward' (buddy seed) | 'battery' (recharge). atX/atY optional placement.
+    // sun: for reward threats, true => grants a blue-sun seed instead of a normal one.
+    function spawnThreat(kind, atX, atY, sun) {
       kind = kind || 'normal';
       const special = kind !== 'normal';
       const x = atX != null ? atX : rand(cell * 0.7, W - cell * 0.7);
@@ -154,9 +148,16 @@
       threats.push({
         id: nextId++, x, y, age: 0, kind,
         reward: kind === 'reward', battery: kind === 'battery',
+        seedKind: kind === 'reward' ? (sun ? 'sun' : 'normal') : null,
         minR: cell * 0.16, maxR: cell * (special ? 0.62 : 0.7),
         phase: Math.random() * TAU, dead: false, popping: 0,
       });
+    }
+    // spawn one special threat: a battery (batteryShare) or a buddy drop (rest).
+    // Buddy drops are a blue-sun seed with probability sunSeedChance, else a normal seed.
+    function spawnSpecial(atX, atY) {
+      if (Math.random() < cfg.batteryShare) { spawnThreat('battery', atX, atY); }
+      else { spawnThreat('reward', atX, atY, Math.random() < cfg.sunSeedChance); }
     }
     function threatRadius(t) {
       if (t.age < cfg.growTime) return lerp(t.minR, t.maxR, t.age / cfg.growTime);
@@ -166,6 +167,120 @@
       if (t.age < cfg.growTime) return 'grow';
       if (t.age < cfg.growTime + cfg.shakeTime) return 'shake';
       return 'pop';
+    }
+
+    // ---- star eels ---------------------------------------------------------
+    function pickTargetStar() {
+      const free = dots.filter(d => !d.entangled && !d.webbed);
+      const pool = free.length ? free : dots;
+      if (!pool.length) return null;
+      return pool[(Math.random() * pool.length) | 0];
+    }
+    function spawnEel() {
+      const target = pickTargetStar();
+      if (!target) return; // nothing to grab
+      const m = cell * 0.6;
+      const corners = [
+        { x: m, y: topMargin + m }, { x: W - m, y: topMargin + m },
+        { x: m, y: H - botMargin - m }, { x: W - m, y: H - botMargin - m },
+      ];
+      const c = corners[(Math.random() * corners.length) | 0];
+      eels.push({
+        id: nextId++, x: c.x, y: c.y, targetId: target.id, state: 'rush',
+        speed: cfg.eelSpeed * cell, angle: Math.atan2(target.y - c.y, target.x - c.x),
+        phase: Math.random() * TAU, dead: false, popping: 0,
+      });
+      if (hud.toast) hud.toast('A star eel appears!', theme.threatBody);
+    }
+    function updateEels(sdt) {
+      for (let k = eels.length - 1; k >= 0; k--) {
+        const e = eels[k];
+        if (e.dead) { e.popping -= sdt * 3; if (e.popping <= 0) eels.splice(k, 1); continue; }
+        let target = dots.find(d => d.id === e.targetId);
+        if (!target) {
+          const nt = pickTargetStar();
+          if (!nt) { e.dead = true; e.popping = 1; continue; }
+          e.targetId = nt.id; target = nt; e.state = 'rush';
+        }
+        if (e.state === 'rush') {
+          const ddx = target.x - e.x, ddy = target.y - e.y, dd = Math.hypot(ddx, ddy) || 1;
+          e.angle = Math.atan2(ddy, ddx);
+          const step = e.speed * sdt;
+          if (dd <= step + cell * 0.3) {
+            e.x = target.x; e.y = target.y; e.state = 'entangle'; target.entangled = true;
+            floatText(target.x, target.y - cell * 0.6, 'Entangled!', theme.threatBody, false);
+            navigator.vibrate && navigator.vibrate(30);
+          } else {
+            e.x += ddx / dd * step; e.y += ddy / dd * step;
+          }
+        } else { // entangle: cling to the captured star
+          e.x = target.x; e.y = target.y; target.entangled = true;
+        }
+      }
+    }
+
+    // ---- web spiders -------------------------------------------------------
+    function removeStar(d) {
+      const idx = dots.indexOf(d);
+      if (idx >= 0) dots.splice(idx, 1);
+      chain = []; // drop any in-progress chain to avoid stale indices
+      burst(d.x, d.y, [theme.dotBody, theme.dotShine, '#ffffff'], 14, 2.4);
+    }
+    function spawnSpider() {
+      const target = pickTargetStar();
+      if (!target) return;
+      const top = topMargin, bot = H - botMargin, left = 0, right = W;
+      const side = (Math.random() * 4) | 0;
+      let o;
+      if (side === 0) o = { x: rand(left, right), y: top };
+      else if (side === 1) o = { x: rand(left, right), y: bot };
+      else if (side === 2) o = { x: left, y: rand(top, bot) };
+      else o = { x: right, y: rand(top, bot) };
+      spiders.push({
+        id: nextId++, x: o.x, y: o.y, origin: o, targetId: target.id, state: 'rush',
+        speed: cfg.spiderSpeed * cell, pullSpeed: cfg.spiderPullSpeed * cell,
+        angle: Math.atan2(target.y - o.y, target.x - o.x),
+        phase: Math.random() * TAU, dead: false, popping: 0,
+      });
+      if (hud.toast) hud.toast('A web spider appears!', theme.threatBody);
+    }
+    function updateSpiders(sdt) {
+      for (let k = spiders.length - 1; k >= 0; k--) {
+        const e = spiders[k];
+        if (e.dead) { e.popping -= sdt * 3; if (e.popping <= 0) spiders.splice(k, 1); continue; }
+        let target = dots.find(d => d.id === e.targetId);
+        if (!target) {
+          const nt = pickTargetStar();
+          if (!nt) { e.dead = true; e.popping = 1; continue; }
+          e.targetId = nt.id; target = nt; e.state = 'rush';
+        }
+        if (e.state === 'rush') {
+          const ddx = target.x - e.x, ddy = target.y - e.y, dd = Math.hypot(ddx, ddy) || 1;
+          e.angle = Math.atan2(ddy, ddx);
+          const step = e.speed * sdt;
+          if (dd <= step + cell * 0.3) {
+            e.x = target.x; e.y = target.y; e.state = 'web'; target.webbed = true;
+            floatText(target.x, target.y - cell * 0.6, 'Webbed!', theme.threatBody, false);
+            navigator.vibrate && navigator.vibrate(30);
+          } else {
+            e.x += ddx / dd * step; e.y += ddy / dd * step;
+          }
+        } else { // web: drag the captured star toward the edge
+          const ax = e.origin.x - target.x, ay = e.origin.y - target.y, ad = Math.hypot(ax, ay) || 1;
+          if (ad <= cell * 0.5) {
+            // dragged off the edge -> the star is lost
+            floatText(e.origin.x, e.origin.y, 'Star lost!', theme.threatBody, true);
+            removeStar(target);
+            e.dead = true; e.popping = 1;
+            navigator.vibrate && navigator.vibrate(60);
+          } else {
+            const nx = ax / ad, ny = ay / ad, step = e.pullSpeed * sdt;
+            target.x += nx * step; target.y += ny * step; target.webbed = true;
+            e.x = target.x + nx * cell * 0.55; e.y = target.y + ny * cell * 0.55;
+            e.angle = Math.atan2(ny, nx);
+          }
+        }
+      }
     }
 
     // ---- particles / floats ------------------------------------------------
@@ -190,6 +305,7 @@
     function dotAt(x, y, pad) {
       let best = -1, bd = (cell * (0.5 + (pad || 0))) ** 2;
       for (let i = 0; i < dots.length; i++) {
+        if (dots[i].entangled || dots[i].webbed) continue; // captured stars can't be activated
         const d = dist2(x, y, dots[i].x, dots[i].y);
         if (d < bd) { bd = d; best = i; }
       }
@@ -202,7 +318,7 @@
       if (carrying) return; // carrying handled on up
       const i = dotAt(p.x, p.y, 0.05);
       if (i >= 0) {
-        chain = [i]; chainBonus = dots[i].pu === 'chain' ? 2 : 0;
+        chain = [i];
         lastTap.t = 0; // a dot tap shouldn't count toward double-tap-to-plant
         navigator.vibrate && navigator.vibrate(8);
         return;
@@ -221,7 +337,7 @@
       const p = toLocal(e); pointer.x = p.x; pointer.y = p.y;
       if (carrying) { positionGhost(e); return; }
       if (!chain.length || !pointer.down) return;
-      const cap = maxChain + chainBonus;
+      const cap = maxChain;
       const i = dotAt(p.x, p.y, 0.0);
       if (i < 0) return;
       const last = chain[chain.length - 1];
@@ -235,9 +351,6 @@
         } else {
           // traced back to an earlier dot — truncate chain to that point (reroute)
           chain = chain.slice(0, existingPos + 1);
-          // recalculate chainBonus from scratch after truncation
-          chainBonus = 0;
-          for (const ci of chain) if (dots[ci].pu === 'chain') chainBonus += 2;
           navigator.vibrate && navigator.vibrate(4);
         }
         return;
@@ -245,7 +358,6 @@
       // add new dot if under cap
       if (chain.length < cap) {
         chain.push(i);
-        if (dots[i].pu === 'chain') chainBonus += 2;
         navigator.vibrate && navigator.vibrate(6);
       }
     }
@@ -274,6 +386,32 @@
       halfAngle = Math.min(halfAngle * angleMul, 75 * D);
       return { range, halfAngle };
     }
+    // blue sun's circle radius: scales with the number of links (capped, modest)
+    function sunBlastRadius(links) {
+      const maxR = cfg.sunBlastMaxRadiusFrac * W;
+      const f = clamp((links - 1) / 4, 0, 1);
+      return maxR * (0.5 + 0.5 * f);
+    }
+
+    // ---- xp / leveling -----------------------------------------------------
+    // xp needed to advance from `lvl` to `lvl + 1`
+    function xpForLevel(lvl) {
+      return Math.round(cfg.xpBase * Math.pow(cfg.xpGrowth, lvl - 1));
+    }
+    function gainXp(amount) {
+      if (level >= cfg.maxLevel) { xp = 0; return; }
+      xp += amount;
+      while (level < cfg.maxLevel && xp >= xpForLevel(level)) {
+        xp -= xpForLevel(level);
+        level += 1;
+        maxChain += 1;
+        floatText(W / 2, topMargin + 24, 'Level ' + level + '!  Chain +1', theme.lineCore, true);
+        flashA = Math.max(flashA, 0.3);
+        navigator.vibrate && navigator.vibrate([10, 30, 10]);
+        if (hud.toast) hud.toast('Level ' + level + '! Max chain ' + maxChain, theme.reward);
+      }
+      if (level >= cfg.maxLevel) xp = 0;
+    }
 
     function resolve(isLoop, loopBackIndex) {
       if (!chain.length) return;
@@ -286,9 +424,12 @@
       // chain-length-based line thickness: 4+ stars get a thick line
       const thickLine = chain.length >= 4;
 
-      // directional cone from the last dot toward the pointer
-      const cone = coneParams(chain.length);
+      // the firing (last) star: a blue sun fires an omni circle instead of a cone
       const last = pts[pts.length - 1];
+      const lastDot = dots[chain[chain.length - 1]];
+      const lastIsSun = !!(lastDot && lastDot.kind === 'sun');
+      const cone = lastIsSun ? null : coneParams(chain.length);
+      const blastR = lastIsSun ? sunBlastRadius(chain.length) : cfg.shotBlastRadius * cell;
       const dx = pointer.x - last.x, dy = pointer.y - last.y;
       const pointerDist = Math.hypot(dx, dy);
       const hasConeDir = pointerDist > cell * 0.3; // only shoot if pointer is meaningfully far
@@ -307,7 +448,7 @@
         }
       }
 
-      // cone / directional shot from final dot
+      // cone / directional shot from final dot (normal stars only)
       if (cone && hasConeDir) {
         const dirX = dx / pointerDist, dirY = dy / pointerDist;
         for (const t of threats) {
@@ -321,43 +462,75 @@
         }
       }
 
-      // small AoE circle around the firing star (always on a shot)
-      if (cone) {
-        const br = cfg.shotBlastRadius * cell;
+      // AoE circle around the firing star (small for a normal star, the main shot for a sun)
+      {
         for (const t of threats) {
           if (t.dead || killed.has(t)) continue;
-          if (dist2(t.x, t.y, last.x, last.y) <= br * br) killed.add(t);
+          if (dist2(t.x, t.y, last.x, last.y) <= blastR * blastR) killed.add(t);
         }
-        ring(last.x, last.y, br, theme.lineCore);
+        ring(last.x, last.y, blastR, lastIsSun ? '#bfe4ff' : theme.lineCore);
       }
 
-      // fire power-ups on chained dots
-      let healLife = 0, mendCount = 0, blastHits = 0;
-      for (const i of chain) {
-        const d = dots[i];
-        if (!d.pu) continue;
-        if (d.pu === 'blast') {
-          const R = cell * 2.0;
-          for (const t of threats) if (!t.dead && dist2(t.x, t.y, d.x, d.y) <= R * R) { killed.add(t); blastHits++; }
-          ring(d.x, d.y, R, theme.lineCore);
-        } else if (d.pu === 'freeze') {
-          freezeTimer = Math.max(freezeTimer, 4);
-          flashA = Math.max(flashA, 0.3);
-        } else if (d.pu === 'life') {
-          healLife++;
-        } else if (d.pu === 'healdot') {
-          mendCount++;
-        } else if (d.pu === 'multi') {
-          d._free = true; // skip activation spend this resolve
-        }
-        d.pu = null;
+      // shots free entangled stars by hitting the eel latched onto them
+      let eelKills = 0;
+      if (eels.length) {
+        const eelR = cell * 0.38;
+        const dirX = pointerDist ? dx / pointerDist : 0, dirY = pointerDist ? dy / pointerDist : 0;
+        eels.forEach(e => {
+          if (e.dead) return;
+          let hit = false;
+          if (pts.length >= 2) {
+            for (let s = 0; s < pts.length - 1; s++) {
+              if (segDist(e.x, e.y, pts[s].x, pts[s].y, pts[s + 1].x, pts[s + 1].y) <= eelR + cfg.threatHitPad) { hit = true; break; }
+            }
+          }
+          if (!hit && cone && hasConeDir) {
+            const tx = e.x - last.x, ty = e.y - last.y, td = Math.hypot(tx, ty);
+            if (td <= cone.range + eelR) {
+              const cosA = (tx * dirX + ty * dirY) / (td || 1);
+              if (Math.acos(clamp(cosA, -1, 1)) <= cone.halfAngle) hit = true;
+            }
+          }
+          if (!hit && dist2(e.x, e.y, last.x, last.y) <= blastR * blastR) hit = true;
+          if (hit) {
+            e.dead = true; e.popping = 1; eelKills++;
+            burst(e.x, e.y, theme.threatParticles, 18, 2.6);
+            const tg = dots.find(d => d.id === e.targetId);
+            if (tg) tg.entangled = eels.some(o => !o.dead && o !== e && o.state === 'entangle' && o.targetId === tg.id);
+            floatText(e.x, e.y, 'Freed!', theme.lineCore, false);
+          }
+        });
       }
-      if (healLife) { lives = clamp(lives + healLife, 0, 9); floatText(W / 2, H * 0.4, '+' + healLife + ' life', '#ff5a7a', true); }
-      if (mendCount) {
-        for (let m = 0; m < mendCount; m++) {
-          let weak = null; for (const d of dots) if (!weak || d.act < weak.act) weak = d;
-          if (weak) { weak.act = weak.max; weak.pop = 1; burst(weak.x, weak.y, theme.plantParticles, 10, 2); }
-        }
+
+      // shots also clear web spiders (frees the webbed star, which stops being dragged)
+      let spiderKills = 0;
+      if (spiders.length) {
+        const spR = cell * 0.4;
+        const dirX = pointerDist ? dx / pointerDist : 0, dirY = pointerDist ? dy / pointerDist : 0;
+        spiders.forEach(e => {
+          if (e.dead) return;
+          let hit = false;
+          if (pts.length >= 2) {
+            for (let s = 0; s < pts.length - 1; s++) {
+              if (segDist(e.x, e.y, pts[s].x, pts[s].y, pts[s + 1].x, pts[s + 1].y) <= spR + cfg.threatHitPad) { hit = true; break; }
+            }
+          }
+          if (!hit && cone && hasConeDir) {
+            const tx = e.x - last.x, ty = e.y - last.y, td = Math.hypot(tx, ty);
+            if (td <= cone.range + spR) {
+              const cosA = (tx * dirX + ty * dirY) / (td || 1);
+              if (Math.acos(clamp(cosA, -1, 1)) <= cone.halfAngle) hit = true;
+            }
+          }
+          if (!hit && dist2(e.x, e.y, last.x, last.y) <= blastR * blastR) hit = true;
+          if (hit) {
+            e.dead = true; e.popping = 1; spiderKills++;
+            burst(e.x, e.y, theme.threatParticles, 18, 2.6);
+            const tg = dots.find(d => d.id === e.targetId);
+            if (tg) tg.webbed = spiders.some(o => !o.dead && o !== e && o.state === 'web' && o.targetId === tg.id);
+            floatText(e.x, e.y, 'Freed!', theme.lineCore, false);
+          }
+        });
       }
 
       // apply kills
@@ -367,26 +540,33 @@
         t.dead = true; t.popping = 1;
         const special = t.reward || t.battery;
         burst(t.x, t.y, theme.threatParticles, special ? 22 : 14, special ? 3 : 2.4);
-        if (t.reward) { seeds++; gained++; floatText(t.x, t.y, '+1 seed', theme.reward, false); }
+        if (t.reward) {
+          gained++;
+          if (t.seedKind === 'sun') { sunSeeds++; floatText(t.x, t.y, '+1 sun', '#4ea8ff', false); }
+          else { seeds++; floatText(t.x, t.y, '+1 star', theme.reward, false); }
+        }
         if (t.battery) {
           for (const d of dots) { d.act = d.max; d.pop = 1; }
           floatText(t.x, t.y, 'Recharged!', theme.lineCore, true);
         }
       });
-      // chance to spawn a special threat behind the kills (grows with combo size)
+      // chance to spawn a beneficial special threat behind the kills (grows with combo size)
       if (n > 0) {
         const chance = Math.min(1, cfg.specialSpawnChance * Math.pow(n, 1.5));
         if (Math.random() < chance) {
           const arr = Array.from(killed);
           const src = arr[(Math.random() * arr.length) | 0];
-          spawnThreat(Math.random() < 0.5 ? 'reward' : 'battery', src.x, src.y);
+          spawnSpecial(src.x, src.y); // beneficial only: buddy drop or battery
         }
       }
 
-      // spend activations only if chain had at least 1 dot (single-dot shot still costs)
+      // spend activations. Starting the chain from a blue sun means only the sun
+      // spends a charge — the other chained stars fire for free.
+      const originDot = dots[chain[0]];
+      const sunOrigin = !!(originDot && originDot.kind === 'sun');
       for (const i of chain) {
         const d = dots[i];
-        if (d._free) { d._free = false; continue; }
+        if (sunOrigin && d !== originDot) continue;
         d.act -= 1; d.usedFx = 0.0001;
       }
       // remove dead dots
@@ -407,10 +587,21 @@
       shakeMag = Math.min(22, shakeMag + (2 + n * 1.6 + (isLoop ? 4 : 0)) * cfg.juice);
       flashA = Math.max(flashA, Math.min(0.6, (0.06 + n * 0.05 + (big ? 0.18 : 0)) * cfg.juice));
       if (big) { targetScale = 0.34; slowTimer = 0.55; navigator.vibrate && navigator.vibrate([12, 30, 18]); }
-      // line afterglow — carry thick flag and cone info for the afterglow draw
-      glowLine = { pts, life: 1, thick: thickLine, cone: (cone && hasConeDir) ? { last, dirX: dx / (pointerDist || 1), dirY: dy / (pointerDist || 1), range: cone.range, halfAngle: cone.halfAngle } : null };
 
-      chain = []; chainBonus = 0; holdCharge = 0;
+      // award xp for every enemy destroyed this stroke (base + capped combo bonus per enemy)
+      const enemies = n + eelKills + spiderKills;
+      if (enemies > 0) {
+        const per = cfg.xpPerEnemy + Math.min(enemies, cfg.xpComboBonusMax);
+        const xpGain = enemies * per;
+        gainXp(xpGain);
+        floatText(pts[pts.length - 1].x, pts[pts.length - 1].y + 16, '+' + xpGain + ' XP', theme.reward, false);
+      }
+      // line afterglow — carry thick flag, cone info, and sun-circle info for the draw
+      glowLine = { pts, life: 1, thick: thickLine,
+        cone: (cone && hasConeDir) ? { last, dirX: dx / (pointerDist || 1), dirY: dy / (pointerDist || 1), range: cone.range, halfAngle: cone.halfAngle } : null,
+        sun: lastIsSun ? { x: last.x, y: last.y, r: blastR } : null };
+
+      chain = []; holdCharge = 0;
       pushHud();
     }
     let slowTimer = 0;
@@ -422,13 +613,15 @@
     // ---- carry (drag from trays) ------------------------------------------
     let ghostEl = opts.ghost;
     function startCarry(kind, type, e) {
-      if (kind === 'seed' && seeds <= 0) return;
-      if (kind === 'pu' && !powerups.includes(type)) return;
+      type = type || 'normal';
+      if (kind === 'seed') {
+        if (type === 'sun' ? sunSeeds <= 0 : seeds <= 0) return;
+      }
       carrying = { kind, type };
       if (ghostEl) {
         ghostEl.style.display = 'flex';
-        ghostEl.textContent = kind === 'seed' ? seedGlyph() : puGlyph(type);
-        ghostEl.style.background = kind === 'seed' ? theme.reward : theme.lineGlow;
+        ghostEl.textContent = type === 'sun' ? sunGlyph() : seedGlyph();
+        ghostEl.style.background = type === 'sun' ? '#4ea8ff' : theme.reward;
       }
       positionGhost(e);
     }
@@ -441,22 +634,17 @@
       const p = toLocal(e);
       const onField = p.x >= 0 && p.x <= W && p.y >= topMargin * 0.6 && p.y <= H - botMargin * 0.4;
       if (carrying.kind === 'seed') {
-        if (onField && seeds > 0 && plantAt(p.x, p.y, false)) { seeds--; }
-      } else if (carrying.kind === 'pu') {
-        const i = dotAt(p.x, p.y, 0.05);
-        if (i >= 0) {
-          dots[i].pu = carrying.type; dots[i].pop = 1;
-          const idx = powerups.indexOf(carrying.type);
-          if (idx >= 0) powerups.splice(idx, 1);
-          burst(dots[i].x, dots[i].y, [theme.lineCore, theme.reward], 10, 2);
+        const sun = carrying.type === 'sun';
+        if (onField && (sun ? sunSeeds > 0 : seeds > 0) && plantAt(p.x, p.y, false, sun ? 'sun' : 'normal')) {
+          if (sun) sunSeeds--; else seeds--;
         }
       }
       carrying = null;
       if (ghostEl) ghostEl.style.display = 'none';
       pushHud();
     }
-    function seedGlyph() { return theme.key === 'tide' ? '◐' : theme.key === 'glow' ? '✦' : '✿'; }
-    function puGlyph(t) { return ({ blast: '✸', chain: '↦', freeze: '❋', multi: '∞', healdot: '✚', life: '♥' })[t] || '◆'; }
+    function seedGlyph() { return '✦'; }
+    function sunGlyph() { return '☀'; }
 
     // ---- update ------------------------------------------------------------
     function update(dt) {
@@ -472,33 +660,24 @@
       elapsed += sdt;
       if (elapsed >= cfg.gameDuration) { endGame(true); }
 
-      // chain growth
-      sinceGrowth += sdt;
-      if (sinceGrowth >= cfg.chainGrowthInterval) { sinceGrowth -= cfg.chainGrowthInterval; maxChain += cfg.chainGrowthAmount; floatText(W / 2, topMargin + 24, 'Chain +' + cfg.chainGrowthAmount + '!', theme.lineCore, true); }
-
       // spawns
       sinceSpawn += sdt;
       if (sinceSpawn >= spawnEvery) {
         sinceSpawn -= spawnEvery;
         spawnThreat('normal');
+        threatSpawnCount++;
+        if (cfg.eelEveryThreats > 0 && threatSpawnCount % cfg.eelEveryThreats === 0) spawnEel();
+        if (cfg.spiderEveryThreats > 0 && threatSpawnCount % cfg.spiderEveryThreats === 0) spawnSpider();
         spawnEvery = Math.max(cfg.spawnFloor, spawnEvery * cfg.spawnSpeedup);
       }
-      sinceReward += sdt;
-      if (sinceReward >= cfg.rewardInterval) { sinceReward -= cfg.rewardInterval; spawnThreat('reward'); }
-      sinceBattery += sdt;
-      if (sinceBattery >= cfg.batteryInterval) { sinceBattery -= cfg.batteryInterval; spawnThreat('battery'); }
-      sincePowerup += sdt;
-      if (sincePowerup >= cfg.powerupInterval) { sincePowerup -= cfg.powerupInterval; grantPowerup(); }
-
-      // freeze
-      if (freezeTimer > 0) freezeTimer = Math.max(0, freezeTimer - dt);
-      const grow = freezeTimer <= 0;
+      sinceSpecial += sdt;
+      if (sinceSpecial >= cfg.specialInterval) { sinceSpecial -= cfg.specialInterval; spawnSpecial(); }
 
       // threats
       for (let k = threats.length - 1; k >= 0; k--) {
         const t = threats[k];
         if (t.dead) { t.popping -= dt * 3.5; if (t.popping <= 0) threats.splice(k, 1); continue; }
-        if (grow) t.age += sdt;
+        t.age += sdt;
         if (threatPhaseName(t) === 'pop') {
           // explode -> lose life
           t.dead = true; t.popping = 1;
@@ -506,6 +685,11 @@
           loseLife();
         }
       }
+
+      // star eels
+      updateEels(sdt);
+      // web spiders
+      updateSpiders(sdt);
 
       // dots life pulse
       for (const d of dots) { if (d.pop > 0) d.pop = Math.max(0, d.pop - dt * 2.4); if (d.usedFx) d.usedFx = Math.min(1, d.usedFx + dt * 3); }
@@ -543,19 +727,19 @@
     function endGame(win) {
       if (finished) return;
       finished = true; won = win; running = false;
-      if (hud.end) hud.end(win, { elapsed, lives, maxChain });
+      if (hud.end) hud.end(win, { elapsed, lives, maxChain, level });
     }
 
     // ---- HUD snapshot ------------------------------------------------------
     let hudTick = 0;
     function pushHud() {
       if (!hud.update) return;
-      const cap = maxChain + chainBonus;
+      const maxed = level >= cfg.maxLevel;
       hud.update({
         timeLeft: Math.max(0, cfg.gameDuration - elapsed),
-        lives, seeds, powerups: powerups.slice(),
-        chainNow: chain.length, chainMax: cap, baseMax: maxChain,
-        frozen: freezeTimer > 0,
+        lives, seeds, sunSeeds,
+        chainNow: chain.length, chainMax: maxChain, baseMax: maxChain,
+        level, xp, xpNext: maxed ? 0 : xpForLevel(level), maxLevel: cfg.maxLevel,
       });
     }
 
@@ -606,6 +790,12 @@
       // dots
       for (const d of dots) drawDot(ctx, d, now);
 
+      // star eels (over dots so coils wrap the captured star)
+      for (const e of eels) drawEel(ctx, e, now);
+
+      // web spiders (over dots so the web wraps the captured star)
+      for (const e of spiders) drawSpider(ctx, e, now);
+
       // particles
       drawParticles(ctx);
 
@@ -616,11 +806,6 @@
 
       // flash
       if (flashA > 0.01) { ctx.fillStyle = theme.flash; ctx.globalAlpha = clamp(flashA, 0, 1); ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
-
-      // freeze tint
-      if (freezeTimer > 0) {
-        ctx.fillStyle = 'rgba(150,220,255,0.10)'; ctx.fillRect(0, 0, W, H);
-      }
     }
 
     function drawChain(ctx, now) {
@@ -629,12 +814,20 @@
       const last = pts[pts.length - 1];
       const thickLine = chain.length >= 4;
 
-      // cone preview toward pointer
-      const cone = coneParams(chain.length);
+      // cone preview toward pointer (normal star) or omni circle (blue sun)
+      const lastDot = dots[chain[chain.length - 1]];
+      const lastIsSun = !!(lastDot && lastDot.kind === 'sun');
+      const cone = lastIsSun ? null : coneParams(chain.length);
       const pdx = pointer.x - last.x, pdy = pointer.y - last.y;
       const pDist = Math.hypot(pdx, pdy);
       const hasConeDir = pDist > cell * 0.3;
-      if (cone && hasConeDir && pointer.down) {
+      if (lastIsSun && pointer.down) {
+        ctx.save();
+        ctx.globalAlpha = 0.22; ctx.fillStyle = '#bfe4ff';
+        ctx.shadowColor = '#4ea8ff'; ctx.shadowBlur = 14 * cfg.juice;
+        ctx.beginPath(); ctx.arc(last.x, last.y, sunBlastRadius(chain.length), 0, TAU); ctx.fill();
+        ctx.restore();
+      } else if (cone && hasConeDir && pointer.down) {
         const dirX = pdx / pDist, dirY = pdy / pDist;
         ctx.save();
         ctx.globalAlpha = 0.22;
@@ -683,6 +876,13 @@
         ctx.arc(c.last.x, c.last.y, c.range * (0.5 + gl.life * 0.5), Math.atan2(c.dirY, c.dirX) - c.halfAngle, Math.atan2(c.dirY, c.dirX) + c.halfAngle);
         ctx.closePath();
         ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+      // sun circle afterglow
+      if (gl.sun) {
+        ctx.globalAlpha = clamp(gl.life, 0, 1) * 0.4;
+        ctx.fillStyle = '#bfe4ff'; ctx.shadowColor = '#4ea8ff'; ctx.shadowBlur = 22 * cfg.juice;
+        ctx.beginPath(); ctx.arc(gl.sun.x, gl.sun.y, gl.sun.r * (0.6 + gl.life * 0.4), 0, TAU); ctx.fill();
         ctx.shadowBlur = 0;
       }
       // line afterglow (only if there were 2+ points)
@@ -748,6 +948,123 @@
       ctx.fill(); ctx.stroke();
     }
 
+    // a serpentine star eel: rushes a star, then coils around it
+    function drawEel(ctx, e, now) {
+      ctx.save();
+      if (e.dead) ctx.globalAlpha = clamp(e.popping, 0, 1);
+      const headR = cell * 0.34;
+      const bodyCol = theme.threatBody, darkCol = theme.threatBodyDark;
+      if (e.state === 'entangle') {
+        // coil rings around the captured star
+        ctx.strokeStyle = bodyCol; ctx.lineWidth = cell * 0.15; ctx.lineCap = 'round';
+        ctx.shadowColor = bodyCol; ctx.shadowBlur = 12;
+        for (let i = 0; i < 3; i++) {
+          const a0 = now * 0.004 + i * TAU / 3 + e.phase;
+          ctx.beginPath(); ctx.arc(e.x, e.y, cell * (0.34 + i * 0.16), a0, a0 + Math.PI * 1.25); ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+        const ha = now * 0.004 + e.phase, hr = cell * 0.5;
+        eelHead(ctx, e.x + Math.cos(ha) * hr, e.y + Math.sin(ha) * hr, headR * 0.85, ha, bodyCol, darkCol);
+      } else {
+        // moving serpent body trailing behind the head
+        const dx = Math.cos(e.angle), dy = Math.sin(e.angle);
+        const px = -dy, py = dx;
+        const N = 8, len = cell * 1.8;
+        for (let i = N; i >= 1; i--) {
+          const f = i / N;
+          const along = -f * len;
+          const wig = Math.sin(now * 0.009 - i * 0.7 + e.phase) * cell * 0.22 * f;
+          const sx = e.x + dx * along + px * wig, sy = e.y + dy * along + py * wig;
+          const sr = headR * (1 - f * 0.62);
+          ctx.fillStyle = mix(bodyCol, '#10061f', f * 0.55);
+          ctx.shadowColor = bodyCol; ctx.shadowBlur = 10;
+          ctx.beginPath(); ctx.arc(sx, sy, sr, 0, TAU); ctx.fill();
+        }
+        ctx.shadowBlur = 0;
+        eelHead(ctx, e.x, e.y, headR, e.angle, bodyCol, darkCol);
+      }
+      ctx.restore();
+    }
+    function eelHead(ctx, x, y, r, ang, bodyCol, darkCol) {
+      ctx.save();
+      ctx.shadowColor = bodyCol; ctx.shadowBlur = 14;
+      const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
+      g.addColorStop(0, mix(bodyCol, '#ffffff', 0.3)); g.addColorStop(1, bodyCol);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+      ctx.shadowBlur = 0;
+      // eyes facing the travel direction
+      const ex = Math.cos(ang), ey = Math.sin(ang), nx = -ey, ny = ex;
+      const eo = r * 0.42, es = r * 0.3;
+      for (const sgn of [-1, 1]) {
+        const cx = x + ex * r * 0.3 + nx * sgn * eo, cy = y + ey * r * 0.3 + ny * sgn * eo;
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy, es, 0, TAU); ctx.fill();
+        ctx.fillStyle = darkCol; ctx.beginPath(); ctx.arc(cx + ex * es * 0.3, cy + ey * es * 0.3, es * 0.5, 0, TAU); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // a web spider: rushes a star, wraps it, then drags it toward the edge
+    function drawSpider(ctx, e, now) {
+      ctx.save();
+      if (e.dead) ctx.globalAlpha = clamp(e.popping, 0, 1);
+      const bodyCol = theme.threatBody, darkCol = theme.threatBodyDark;
+      if (e.state === 'web') {
+        // web strand back to the edge it's dragging toward
+        ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.origin.x, e.origin.y); ctx.stroke();
+        const tg = dots.find(d => d.id === e.targetId);
+        if (tg) drawWebWrap(ctx, tg.x, tg.y, cell * 0.5);
+      }
+      spiderBody(ctx, e.x, e.y, cell * 0.3, e.angle, now, bodyCol, darkCol);
+      ctx.restore();
+    }
+    function drawWebWrap(ctx, x, y, r) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5;
+      const spokes = 8;
+      for (let i = 0; i < spokes; i++) {
+        const a = i / spokes * TAU;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); ctx.stroke();
+      }
+      for (let ring = 1; ring <= 2; ring++) {
+        const rr = r * ring / 2.4;
+        ctx.beginPath();
+        for (let i = 0; i <= spokes; i++) { const a = i / spokes * TAU; const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    function spiderBody(ctx, x, y, r, ang, now, bodyCol, darkCol) {
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(ang);
+      // legs
+      ctx.strokeStyle = darkCol; ctx.lineWidth = Math.max(1.5, r * 0.2); ctx.lineCap = 'round';
+      const wig = Math.sin(now * 0.02 + e_phase(x, y)) * 0.18;
+      for (let i = 0; i < 8; i++) {
+        const side = i < 4 ? -1 : 1;
+        const t = i % 4;
+        const a = side * (0.55 + t * 0.45) + wig * side;
+        const mx = Math.cos(a) * r * 1.2, my = Math.sin(a) * r * 1.2;
+        const fx = Math.cos(a) * r * 2.1, fy = Math.sin(a) * r * 2.1;
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(mx, my - r * 0.4, fx, fy); ctx.stroke();
+      }
+      // abdomen
+      ctx.shadowColor = bodyCol; ctx.shadowBlur = 12;
+      const g = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.1, 0, 0, r * 1.1);
+      g.addColorStop(0, mix(bodyCol, '#ffffff', 0.3)); g.addColorStop(1, bodyCol);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(-r * 0.25, 0, r * 1.05, r * 0.9, 0, 0, TAU); ctx.fill();
+      // head
+      ctx.beginPath(); ctx.arc(r * 0.7, 0, r * 0.55, 0, TAU); ctx.fill();
+      ctx.shadowBlur = 0;
+      // eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(r * 0.92, -r * 0.24, r * 0.16, 0, TAU); ctx.arc(r * 0.92, r * 0.24, r * 0.16, 0, TAU); ctx.fill();
+      ctx.fillStyle = darkCol;
+      ctx.beginPath(); ctx.arc(r * 1.0, -r * 0.24, r * 0.08, 0, TAU); ctx.arc(r * 1.0, r * 0.24, r * 0.08, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+    function e_phase(x, y) { return (x + y) * 0.05; }
+
     function drawThreat(ctx, t, now) {
       let r = threatRadius(t);
       const phase = threatPhaseName(t);
@@ -765,7 +1082,11 @@
       if (danger) { ctx.shadowColor = t.reward ? theme.reward : theme.threatBody; ctx.shadowBlur = 22; }
       // body
       const grad = ctx.createRadialGradient(x - rr * 0.3, y - rr * 0.35, rr * 0.1, x, y, rr);
-      if (t.reward) { grad.addColorStop(0, '#fff2b0'); grad.addColorStop(1, theme.reward); }
+      const sunSeed = t.reward && t.seedKind === 'sun';
+      if (t.reward) {
+        if (sunSeed) { grad.addColorStop(0, '#e6f3ff'); grad.addColorStop(1, '#3f93f0'); }
+        else { grad.addColorStop(0, '#fff2b0'); grad.addColorStop(1, theme.reward); }
+      }
       else { grad.addColorStop(0, mix(theme.threatBody, '#ffffff', 0.25)); grad.addColorStop(1, danger ? theme.threatBodyDark : theme.threatBody); }
       ctx.fillStyle = grad;
       blobPath(ctx, x, y, rr, t.reward ? 0.05 : 0.07, now * 0.003 + t.phase); ctx.fill();
@@ -773,9 +1094,9 @@
 
       if (t.reward) {
         // sparkle ring + happy face
-        ctx.strokeStyle = theme.rewardDark; ctx.lineWidth = Math.max(1.5, rr * 0.08);
+        ctx.strokeStyle = sunSeed ? '#1f6fd0' : theme.rewardDark; ctx.lineWidth = Math.max(1.5, rr * 0.08);
         for (let i = 0; i < 8; i++) { const a = i / 8 * TAU + now * 0.001; ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * rr * 1.05, y + Math.sin(a) * rr * 1.05); ctx.lineTo(x + Math.cos(a) * rr * 1.32, y + Math.sin(a) * rr * 1.32); ctx.stroke(); }
-        face(ctx, x, y, rr, theme.rewardCore, true);
+        face(ctx, x, y, rr, sunSeed ? '#0b3a72' : theme.rewardCore, true);
       } else {
         face(ctx, x, y, rr, theme.threatEye, false);
       }
@@ -807,7 +1128,25 @@
       ctx.fillStyle = 'rgba(0,0,0,0.12)';
       ctx.beginPath(); ctx.ellipse(d.x, d.y + base * 0.95, base * 0.8, base * 0.34, 0, 0, TAU); ctx.fill();
 
-      if (theme.dotStyle === 'star') {
+      if (d.kind === 'sun') {
+        // blue sun: glowing disc ringed by a short corona of rays
+        ctx.shadowColor = '#4ea8ff'; ctx.shadowBlur = 18;
+        ctx.fillStyle = '#5ba2f5';
+        const rays = 12;
+        for (let i = 0; i < rays; i++) {
+          const a = i / rays * TAU + now * 0.0006;
+          const r0 = r * 1.02, r1 = r * (1.45 + 0.12 * Math.sin(now * 0.005 + i));
+          ctx.beginPath();
+          ctx.moveTo(x + Math.cos(a - 0.13) * r0, y + Math.sin(a - 0.13) * r0);
+          ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1);
+          ctx.lineTo(x + Math.cos(a + 0.13) * r0, y + Math.sin(a + 0.13) * r0);
+          ctx.closePath(); ctx.fill();
+        }
+        const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r * 1.1);
+        g.addColorStop(0, '#e6f3ff'); g.addColorStop(0.6, '#6fb6ff'); g.addColorStop(1, '#1f6fd0');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.05, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+      } else if (theme.dotStyle === 'star') {
         ctx.shadowColor = theme.leaf; ctx.shadowBlur = 16; // cyan halo
         starShape(ctx, x, y, r * 1.18, r * 0.5, 5, -Math.PI / 2);
         const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r * 1.2);
@@ -825,7 +1164,7 @@
         if (theme.dotStyle === 'pearl') { ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.beginPath(); ctx.arc(x - r * 0.32, y - r * 0.34, r * 0.22, 0, TAU); ctx.fill(); }
       }
       // face
-      const eyeC = theme.dotEye;
+      const eyeC = d.kind === 'sun' ? '#0b3a72' : theme.dotEye;
       const e = r * 0.18, ex = r * 0.3, ey = y - r * 0.02;
       ctx.fillStyle = eyeC;
       ctx.beginPath(); ctx.arc(x - ex, ey, e, 0, TAU); ctx.arc(x + ex, ey, e, 0, TAU); ctx.fill();
@@ -841,12 +1180,10 @@
         ctx.fillStyle = i < d.act ? theme.pip : theme.pipEmpty; ctx.fill();
       }
 
-      // power-up badge
-      if (d.pu) {
-        const bx = x + r * 0.75, by = y - r * 0.75, br = r * 0.5;
-        ctx.fillStyle = theme.lineGlow; ctx.beginPath(); ctx.arc(bx, by, br, 0, TAU); ctx.fill();
-        ctx.fillStyle = '#fff'; ctx.font = '700 ' + (br * 1.3) + 'px Fredoka, sans-serif';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(puGlyph(d.pu), bx, by + 1);
+      // entangled stars are dimmed (disabled until the eel is shot off)
+      if (d.entangled || d.webbed) {
+        ctx.globalAlpha = 0.5; ctx.fillStyle = '#1a0a2c';
+        ctx.beginPath(); ctx.arc(x, y, r * 1.15, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
       }
       ctx.restore();
     }
@@ -920,11 +1257,11 @@
     window.addEventListener('resize', () => { resize(); ensureStars(); });
 
     const api = { start, applyConfig, setTheme, startCarry, reset: () => { reset(); running = true; finished = false; },
-      _frame: () => raf, getCfg: () => cfg, getTheme: () => theme, POWERUPS, puGlyph, seedGlyph,
-      _dots: () => dots, _threats: () => threats, _render: (t) => render(t || performance.now()), _state: () => ({ lives, seeds, powerups: powerups.slice(), maxChain, elapsed, finished }) };
+      _frame: () => raf, getCfg: () => cfg, getTheme: () => theme, seedGlyph, sunGlyph,
+      _dots: () => dots, _threats: () => threats, _eels: () => eels, _spiders: () => spiders, _render: (t) => render(t || performance.now()), _state: () => ({ lives, seeds, maxChain, elapsed, finished }) };
     raf = requestAnimationFrame(frame);
     return api;
   }
 
-  window.GameEngine = { create, POWERUPS };
+  window.GameEngine = { create };
 })();

@@ -100,20 +100,27 @@
       body.appendChild(b);
     }
 
-    // ---- layout (mirrors the design prototype's panel exactly) ----
-    section('World');
-    radio({ label: 'Theme', key: 'theme', options: ['bloom', 'tide', 'glow'] });
+    // ---- layout ----
     section('Threats');
     slider({ label: 'Spawn gap', key: 'spawnInterval', min: 0.8, max: 4, step: 0.1, unit: 's' });
     slider({ label: 'Grow time', key: 'growTime', min: 4, max: 16, step: 0.5, unit: 's' });
-    slider({ label: 'Seed gap', key: 'rewardInterval', min: 6, max: 40, step: 1, unit: 's' });
-    slider({ label: 'Battery gap', key: 'batteryInterval', min: 6, max: 60, step: 1, unit: 's' });
-    slider({ label: 'Special chance', key: 'specialSpawnChance', min: 0, max: 0.2, step: 0.01 });
+    slider({ label: 'Special gap', key: 'specialInterval', min: 6, max: 40, step: 1, unit: 's' });
+    slider({ label: 'Battery share', key: 'batteryShare', min: 0, max: 1, step: 0.05 });
+    slider({ label: 'Combo drop chance', key: 'specialSpawnChance', min: 0, max: 0.2, step: 0.01 });
+    slider({ label: 'Eel every', key: 'eelEveryThreats', min: 5, max: 40, step: 1, unit: ' thr' });
+    slider({ label: 'Spider every', key: 'spiderEveryThreats', min: 5, max: 40, step: 1, unit: ' thr' });
     section('Chaining');
     slider({ label: 'Start cap', key: 'chainStart', min: 2, max: 6, step: 1 });
-    slider({ label: '+1 cap every', key: 'chainGrowthInterval', min: 8, max: 40, step: 1, unit: 's' });
-    section('Dots');
-    slider({ label: 'Activations', key: 'dotActivations', min: 1, max: 6, step: 1 });
+    section('Leveling');
+    slider({ label: 'XP for level 2', key: 'xpBase', min: 50, max: 500, step: 10 });
+    slider({ label: 'XP growth', key: 'xpGrowth', min: 1.5, max: 4, step: 0.5, unit: '×' });
+    slider({ label: 'Max level', key: 'maxLevel', min: 2, max: 8, step: 1 });
+    slider({ label: 'XP per enemy', key: 'xpPerEnemy', min: 1, max: 30, step: 1 });
+    slider({ label: 'Combo bonus cap', key: 'xpComboBonusMax', min: 0, max: 30, step: 1 });
+    section('Buddies');
+    slider({ label: 'Star charges', key: 'dotActivations', min: 1, max: 6, step: 1 });
+    slider({ label: 'Sun charges', key: 'sunActivations', min: 1, max: 8, step: 1 });
+    slider({ label: 'Sun drop chance', key: 'sunSeedChance', min: 0, max: 1, step: 0.05 });
     slider({ label: 'Start seeds', key: 'startSeeds', min: 0, max: 10, step: 1 });
     section('Feel');
     slider({ label: 'Juice', key: 'juice', min: 0, max: 1.4, step: 0.1, unit: '×' });

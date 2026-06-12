@@ -1,43 +1,6 @@
-// themes.js — palette + style descriptors for the three cartoony worlds.
-// The engine reads these to recolor/redraw every element. dotStyle drives the
-// buddy silhouette; everything else is pure color.
+// themes.js — palette + style descriptors. The game now ships a single world:
+// Glow · cosmos (star buddies). The engine reads this to color/draw everything.
 window.THEMES = {
-  bloom: {
-    key: 'bloom',
-    label: 'Bloom · garden',
-    dotStyle: 'sprout',
-    bgTop: '#bfe9ff', bgBot: '#d8f3c9',
-    grid: 'rgba(255,255,255,0.40)',
-    dotBody: '#67C266', dotBodyDark: '#3f9a46', dotShine: '#a8e6a0',
-    dotEye: '#143b18', leaf: '#56b85a',
-    threatBody: '#FF4F8B', threatBodyDark: '#D62E72', threatEye: '#3a0f24',
-    reward: '#FFD24C', rewardDark: '#ffae00', rewardCore: '#7a4a00',
-    lineGlow: '#3f9a46', lineCore: '#bdf4a8',
-    pip: '#FFD24C', pipEmpty: 'rgba(255,255,255,0.45)',
-    threatParticles: ['#FF4F8B', '#ff9ec4', '#FFD24C', '#ffffff'],
-    plantParticles: ['#67C266', '#a8e6a0', '#FFD24C'],
-    hudInk: '#2f6b3a', hudInkSoft: 'rgba(47,107,58,0.6)',
-    panelBg: 'rgba(255,255,255,0.82)', panelBorder: 'rgba(47,107,58,0.18)',
-    flash: 'rgba(255,255,255,0.55)', dark: false,
-  },
-  tide: {
-    key: 'tide',
-    label: 'Tide · reef',
-    dotStyle: 'pearl',
-    bgTop: '#3fd6e6', bgBot: '#0a5965',
-    grid: 'rgba(255,255,255,0.18)',
-    dotBody: '#cdf3f9', dotBodyDark: '#7fc9d6', dotShine: '#ffffff',
-    dotEye: '#0e6e7e', leaf: '#bdf6ff',
-    threatBody: '#9A5BF0', threatBodyDark: '#6A33C4', threatEye: '#26104a',
-    reward: '#FF8A5B', rewardDark: '#e06636', rewardCore: '#ffe08a',
-    lineGlow: '#0a4d59', lineCore: '#bdf6ff',
-    pip: '#bdf6ff', pipEmpty: 'rgba(255,255,255,0.35)',
-    threatParticles: ['#9A5BF0', '#bdf6ff', '#FF8A5B', '#ffffff'],
-    plantParticles: ['#bdf6ff', '#cdf3f9', '#FF8A5B'],
-    hudInk: '#eafbff', hudInkSoft: 'rgba(234,251,255,0.65)',
-    panelBg: 'rgba(8,70,80,0.55)', panelBorder: 'rgba(255,255,255,0.18)',
-    flash: 'rgba(189,246,255,0.5)', dark: true,
-  },
   glow: {
     key: 'glow',
     label: 'Glow · cosmos',

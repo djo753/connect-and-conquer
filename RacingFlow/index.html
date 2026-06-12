@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+<title>RacingFlow — prototype</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; inset: 0; pointer-events: none;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #fff;
+    text-shadow: 0 2px 4px rgba(0,0,0,.6);
+  }
+  #hud {
+    position: absolute; top: 16px; left: 16px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  #hud .big { font-size: 30px; font-weight: 700; }
+  #hud .sub { font-size: 15px; opacity: .85; }
+  #boost {
+    display: none; margin-top: 6px; font-size: 20px; font-weight: 800;
+    color: #ffd23f; letter-spacing: 1px;
+  }
+  #carried {
+    position: absolute; top: 16px; right: 16px;
+    display: flex; gap: 8px;
+  }
+  .swatch {
+    width: 40px; height: 40px; border-radius: 8px;
+    border: 2px solid rgba(255,255,255,.5);
+    background: rgba(255,255,255,.1);
+  }
+  .screen {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px;
+    background: rgba(0,0,0,.55); pointer-events: auto; text-align: center;
+  }
+  .screen h1 { font-size: 52px; font-weight: 800; }
+  .screen p { font-size: 18px; opacity: .9; max-width: 520px; line-height: 1.5; }
+  .screen .key { background: rgba(255,255,255,.15); padding: 2px 8px; border-radius: 6px; }
+  #options {
+    display: flex; flex-direction: column; gap: 10px; pointer-events: auto;
+    font-size: 16px; text-align: left; margin: 4px 0;
+    background: rgba(255,255,255,.08); padding: 16px 20px; border-radius: 12px;
+  }
+  #options label { cursor: pointer; display: flex; align-items: center; }
+  #options input { width: 18px; height: 18px; margin-right: 10px; cursor: pointer; }
+  #options select {
+    margin-left: 10px; font-size: 15px; padding: 4px 8px; border-radius: 6px;
+    background: #222; color: #fff; border: 1px solid rgba(255,255,255,.3);
+  }
+  #plowbar {
+    position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+    width: 340px; height: 24px; border: 2px solid rgba(255,255,255,.6);
+    border-radius: 14px; overflow: hidden; display: none; background: rgba(0,0,0,.4);
+  }
+  #plowfill { height: 100%; width: 0%; background: #888; transition: width .06s linear; }
+  #objective {
+    position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+    text-align: center; background: rgba(0,0,0,.35); padding: 8px 20px; border-radius: 12px;
+  }
+  #objCur { font-size: 26px; font-weight: 800; letter-spacing: 1px; }
+  #objNext { font-size: 14px; opacity: .8; margin-top: 2px; }
+  #touch { position: absolute; inset: 0; pointer-events: none; }
+  .tbtn {
+    position: absolute; bottom: 26px; width: 104px; height: 104px; border-radius: 50%;
+    font-size: 44px; line-height: 1; color: #fff; background: rgba(255,255,255,.16);
+    border: 2px solid rgba(255,255,255,.45); pointer-events: auto;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #btnLeft { left: 26px; }
+  #btnRight { right: 26px; }
+  #btnBoost {
+    left: 50%; transform: translateX(-50%); bottom: 70px; width: 86px; height: 86px;
+    font-size: 22px; font-weight: 800; display: none; color: #ffd23f;
+  }
+  .tbtn:active { background: rgba(255,255,255,.38); }
+  /* hide the steer pad on real mouse devices (boost button stays usable) */
+  @media (hover: hover) and (pointer: fine) { #btnLeft, #btnRight { display: none; } }
+  #finishScreen { display: none; }
+  #finalTime { font-size: 40px; font-weight: 800; color: #ffd23f; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="hud">
+    <div id="lap" class="big">Level 1</div>
+    <div id="time" class="big">0.00s</div>
+    <div id="speed" class="sub">0 u/s</div>
+    <div id="boost">BOOST!</div>
+  </div>
+  <div id="objective">
+    <div id="objCur">—</div>
+    <div id="objNext">Next: —</div>
+  </div>
+  <div id="plowbar"><div id="plowfill"></div></div>
+  <div id="touch">
+    <button id="btnLeft" class="tbtn">◀</button>
+    <button id="btnRight" class="tbtn">▶</button>
+    <button id="btnBoost" class="tbtn">GO!</button>
+  </div>
+
+  <div id="startScreen" class="screen">
+    <h1>FarmRush</h1>
+    <p>Farm the materials in the order shown at the top — <b>grass</b>, <b>wheat</b>, <b>berries</b>.
+       You only plow the <b>current</b> material; driving over the wrong one is 20% slower.
+       Each objective you finish is a <b>level-up</b> (speed, wider plow, boost). Finish all to win — fastest time wins.</p>
+    <p>Auto-drive — <span class="key">A</span>/<span class="key">D</span> or <span class="key">←</span>/<span class="key">→</span> steer &nbsp;
+       <span class="key">S</span> brake &nbsp; <span class="key">Space</span> boost (once unlocked)</p>
+    <div id="options">
+      <label><input type="checkbox" id="optLaneMarks" checked> Lane markings</label>
+      <label><input type="checkbox" id="optOffroad" checked> Off-road slowdown</label>
+    </div>
+    <p id="startBtn"><b>Press SPACE or tap here to start</b></p>
+  </div>
+
+  <div id="finishScreen" class="screen">
+    <h1>Level complete!</h1>
+    <div id="finalTime">0.00s</div>
+    <p>Press <span class="key">R</span> or tap to play again</p>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
